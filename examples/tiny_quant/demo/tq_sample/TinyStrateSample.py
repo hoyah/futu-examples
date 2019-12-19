@@ -13,20 +13,22 @@ class TinyStrateSample(TinyStrateBase):
     name = 'tiny_strate_sample'
 
     """策略需要用到行情数据的股票池"""
-    symbol_pools = ['HK.00700', 'HK.00001']
+    symbol_pools = ['HK.00700', 'HK.01810', 'HK.00552', 'HK.09988']
 
     def __init__(self):
-       super(TinyStrateSample, self).__init__()
+        super(TinyStrateSample, self).__init__()
 
-       """请在setting.json中配置参数"""
-       self.param1 = None
-       self.param2 = None
+        """请在setting.json中配置参数"""
+        self.param1 = None
+        self.param2 = None
+        # self.log("__init__")
 
     def on_init_strate(self):
         """策略加载完配置后的回调
         1. 可修改symbol_pools 或策略内部其它变量的初始化
         2. 此时还不能调用futu api的接口
         """
+        self.log('on_init_strate')
 
     def on_start(self):
         """策略启动完成后的回调
@@ -60,7 +62,7 @@ class TinyStrateSample(TinyStrateBase):
 
         str_log = "on_quote_changed symbol=%s dt=%s sma(%s) open=%s high=%s close=%s low=%s vol=%s" % (
                     symbol, str_dt, n, ma_open, ma_high, ma_close, ma_low, ma_vol)
-        self.log(str_log)
+        #self.log(str_log)
 
     def on_bar_min1(self, tiny_bar):
         """每一分钟触发一次回调"""
@@ -108,6 +110,7 @@ class TinyStrateSample(TinyStrateBase):
 
     def sma(self, np_array, n, array=False):
         """简单均线"""
+        #self.log('sma')
         if n < 2:
             result = np_array
         else:
@@ -118,6 +121,7 @@ class TinyStrateSample(TinyStrateBase):
 
     def ema(self, np_array, n, array=False):
         """移动均线"""
+        #self.log('ema')
         if n < 2:
             result = np_array
         else:
