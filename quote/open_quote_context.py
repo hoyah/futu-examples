@@ -141,6 +141,47 @@ class OpenQuoteContext(OpenContextBase):
 
         return RET_OK, trade_day_list
 
+    def request_trading_days(self, market, start=None, end=None):
+        """获取交易日
+        :param market: 市场类型，TradeDateMarket_
+        :param start: 起始日期。例如'2018-01-01'。
+        :param end: 结束日期。例如'2018-01-01'。
+         start和end的组合如下：
+         ==========    ==========    ========================================
+         start类型      end类型       说明
+         ==========    ==========    ========================================
+         str            str           start和end分别为指定的日期
+         None           str           start为end往前365天
+         str            None          end为start往后365天
+         None           None          end为当前日期，start为end往前365天
+         ==========    ==========    ========================================
+        :return: 成功时返回(RET_OK, data)，data是[{'trade_date_type': 0, 'time': '2018-01-05'}]数组；失败时返回(RET_ERROR, data)，其中data是错误描述字符串
+        """
+        if market is None or is_str(market) is False:
+            error_str = ERROR_STR_PREFIX + "the type of market param is wrong"
+            return RET_ERROR, error_str
+
+        ret, msg, start, end = normalize_start_end_date(start, end, 365)
+        if ret != RET_OK:
+            return ret, msg
+
+        query_processor = self._get_sync_query_processor(
+            RequestTradeDayQuery.pack_req, RequestTradeDayQuery.unpack_rsp)
+
+        # the keys of kargs should be corresponding to the actual function arguments
+        kargs = {
+            'market': market,
+            'start_date': start,
+            'end_date': end,
+            'conn_id': self.get_sync_conn_id()
+        }
+        ret_code, msg, trade_day_list = query_processor(**kargs)
+
+        if ret_code != RET_OK:
+            return RET_ERROR, msg
+
+        return RET_OK, trade_day_list
+
     def get_stock_basicinfo(self, market, stock_type=SecurityType.STOCK, code_list=None):
         """
         获取指定市场中特定类型的股票基本信息
@@ -165,7 +206,9 @@ class OpenQuoteContext(OpenContextBase):
             listing_date        str            上市时间
             stock_id            int            股票id
             delisting           bool           是否退市
-			index_option_type   str           指数期权类型
+			index_option_type   str            指数期权类型（期权特有字段）
+			main_contract       bool           是否主连合约（期货特有字段）
+			last_trade_time     string         最后交易时间（期货特有字段，非主连期货合约才有值）
             =================   ===========   ==========================================================================
 
         :example:
@@ -211,7 +254,8 @@ class OpenQuoteContext(OpenContextBase):
         col_list = [
             'code', 'name', 'lot_size', 'stock_type', 'stock_child_type', 'stock_owner',
             'option_type', 'strike_time', 'strike_price', 'suspension',
-            'listing_date', 'stock_id', 'delisting', 'index_option_type'
+            'listing_date', 'stock_id', 'delisting', 'index_option_type',
+            'main_contract', 'last_trade_time'
         ]
 
         basic_info_table = pd.DataFrame(basic_info_list, columns=col_list)
@@ -565,6 +609,9 @@ class OpenQuoteContext(OpenContextBase):
 
         """
         code_list = unique_and_normalize_list(code_list)
+        if not code_list:
+            error_str = ERROR_STR_PREFIX + "the type of code param is wrong"
+            return RET_ERROR, error_str
 
         for code in code_list:
             if code is None or is_str(code) is False:
@@ -709,6 +756,12 @@ class OpenQuoteContext(OpenContextBase):
                 after_volume               int            盘后成交量
                 after_turnover             double         盘后成交额
                 sec_status                 str            股票状态， 参见SecurityStatus
+                future_valid               bool           是否期货
+                future_last_settle_price   float          昨结
+                future_position            float          持仓量
+                future_position_change     float          日增仓
+                future_main_contract       bool           是否主连合约
+                future_last_trade_time     string         只有非主连期货合约才有该字段
                 =======================   =============   ==============================================================================
         """
         code_list = unique_and_normalize_list(code_list)
@@ -796,6 +849,13 @@ class OpenQuoteContext(OpenContextBase):
                           'plate_equal_count'
                           ]
 
+        future_col_list = ['future_last_settle_price',
+                           'future_position',
+                           'future_position_change',
+                           'future_main_contract',
+                           'future_last_trade_time',
+                         ]
+
         col_list = [
             'code',
             'update_time',
@@ -831,6 +891,7 @@ class OpenQuoteContext(OpenContextBase):
             'lowest52weeks_price',
             'highest_history_price',
             'lowest_history_price',
+            'close_price_5min',
             'after_volume',
             'after_turnover',
             'sec_status',
@@ -848,6 +909,9 @@ class OpenQuoteContext(OpenContextBase):
         col_dict.update((key, 1) for key in index_col_list)
         col_dict['plate_valid'] = 1
         col_dict.update((key, 1) for key in plate_col_list)
+        col_dict['future_valid'] = 1
+        col_dict.update((key, 1) for key in future_col_list)
+
         col_dict.update((row[0], 1) for row in pb_field_map_PreAfterMarketData_pre)
         col_dict.update((row[0], 1) for row in pb_field_map_PreAfterMarketData_after)
 
@@ -982,6 +1046,8 @@ class OpenQuoteContext(OpenContextBase):
                 stock_type              str            股票类型，参见SecurityType
                 list_time               str            上市时间（美股默认是美东时间，港股A股默认是北京时间）
                 stock_id                int            股票id
+                main_contract           bool           是否主连合约（期货特有字段）
+			    last_trade_time         string         最后交易时间（期货特有字段，非主连期货合约才有值）
                 =====================   ===========   ==============================================================
         """
         if plate_code is None or is_str(plate_code) is False:
@@ -1009,6 +1075,7 @@ class OpenQuoteContext(OpenContextBase):
         col_list = [
             'code', 'lot_size', 'stock_name', 'stock_owner',
             'stock_child_type', 'stock_type', 'list_time', 'stock_id',
+            'main_contract', 'last_trade_time'
         ]
         plate_stock_table = pd.DataFrame(plate_stock_list, columns=col_list)
 
@@ -1034,6 +1101,8 @@ class OpenQuoteContext(OpenContextBase):
                 bid_broker_id           int             经纪买盘id
                 bid_broker_name         str             经纪买盘名称
                 bid_broker_pos          int             经纪档位
+                order_id                int64           交易所订单id，与交易接口返回的订单id并不一样
+                order_volume            int64           订单股数
                 =====================   ===========   ==============================================================
 
                 ask_frame_table 经纪卖盘数据
@@ -1045,6 +1114,8 @@ class OpenQuoteContext(OpenContextBase):
                 ask_broker_id           int             经纪卖盘id
                 ask_broker_name         str             经纪卖盘名称
                 ask_broker_pos          int             经纪档位
+                order_id                int64           交易所订单id，与交易接口返回的订单id并不一样
+                order_volume            int64           订单股数
                 =====================   ===========   ==============================================================
         """
         if code is None or is_str(code) is False:
@@ -1064,10 +1135,10 @@ class OpenQuoteContext(OpenContextBase):
 
         (_, bid_list, ask_list) = content
         col_bid_list = [
-            'code', 'bid_broker_id', 'bid_broker_name', 'bid_broker_pos'
+            'code', 'bid_broker_id', 'bid_broker_name', 'bid_broker_pos', 'order_id', 'order_volume'
         ]
         col_ask_list = [
-            'code', 'ask_broker_id', 'ask_broker_name', 'ask_broker_pos'
+            'code', 'ask_broker_id', 'ask_broker_name', 'ask_broker_pos', 'order_id', 'order_volume'
         ]
 
         bid_frame_table = pd.DataFrame(bid_list, columns=col_bid_list)
@@ -1393,6 +1464,9 @@ class OpenQuoteContext(OpenContextBase):
                 owner_lot_multiplier    float          相等正股手数，指数期权无该字段
                 option_area_type        str            期权地区类型，见 OptionAreaType_
                 contract_multiplier     float          合约乘数，指数期权特有字段
+                last_settle_price       float          昨结，期货特有字段
+                position                float          持仓量，期货特有字段
+                position_change         float          日增仓，期货特有字段
                 =====================   ===========   ==============================================================
         """
         code_list = unique_and_normalize_list(code_list)
@@ -1422,6 +1496,7 @@ class OpenQuoteContext(OpenContextBase):
             'premium', 'delta', 'gamma', 'vega', 'theta', 'rho',
             'net_open_interest', 'expiry_date_distance', 'contract_nominal_value',
             'owner_lot_multiplier', 'option_area_type', 'contract_multiplier',
+            'last_settle_price','position','position_change'
         ]
 
         col_list.extend(row[0] for row in pb_field_map_PreAfterMarketData_pre)
@@ -1446,7 +1521,7 @@ class OpenQuoteContext(OpenContextBase):
                 =====================   ===========   ==============================================================
                 参数                      类型                        说明
                 =====================   ===========   ==============================================================
-                stock_code               str            股票代码
+                code                     str            股票代码
                 sequence                 int            逐笔序号
                 time                     str            成交时间（美股默认是美东时间，港股A股默认是北京时间）
                 price                    float          成交价格
@@ -1554,11 +1629,12 @@ class OpenQuoteContext(OpenContextBase):
 
         return RET_OK, kline_frame_table
 
-    def get_order_book(self, code):
+    def get_order_book(self, code, num = 10):
         """
         获取实时摆盘数据
 
         :param code: 股票代码
+        :param num: 请求摆盘档数，LV2行情用户最多可以获取10档，SF行情用户最多可以获取40档
         :return: (ret, data)
 
                 ret == RET_OK 返回字典，数据格式如下
@@ -1583,6 +1659,7 @@ class OpenQuoteContext(OpenContextBase):
 
         kargs = {
             "code": code,
+            "num": num,
             "conn_id": self.get_sync_conn_id()
         }
         ret_code, msg, orderbook = query_processor(**kargs)
@@ -1709,22 +1786,30 @@ class OpenQuoteContext(OpenContextBase):
                 ret == RET_OK 返回pd dataframe数据，数据列格式如下
 
                 ret != RET_OK 返回错误字符串
-                =================   ===========   ==============================================================================
-                参数                  类型                        说明
-                =================   ===========   ==============================================================================
-                code                str            证券代码
-                lot_size            int            每手数量
-                stock_type          str            证券类型，参见SecurityType
-                stock_name          str            证券名字
-                list_time           str            上市时间（美股默认是美东时间，港股A股默认是北京时间）
-                wrt_valid           bool           是否是涡轮，如果为True，下面wrt开头的字段有效
-                wrt_type            str            涡轮类型，参见WrtType
-                wrt_code            str            所属正股
-                =================   ===========   ==============================================================================
+                =======================   ===========   ==============================================================================
+                参数                        类型                        说明
+                =======================   ===========   ==============================================================================
+                code                        str           证券代码
+                lot_size                    int           每手数量
+                stock_type                  str           证券类型，参见SecurityType
+                stock_name                  str           证券名字
+                list_time                   str           上市时间（美股默认是美东时间，港股A股默认是北京时间）
+                wrt_valid                   bool          是否是涡轮，如果为True，下面wrt开头的字段有效
+                wrt_type                    str           涡轮类型，参见WrtType
+                wrt_code                    str           所属正股
+                future_valid                bool          是否是期货，如果为True，下面future开头的字段有效
+                future_main_contract        bool          是否主连合约（期货特有字段）
+			    future_last_trade_time      string        最后交易时间（期货特有字段，非主连期货合约才有值）
+                =======================   ===========   ==============================================================================
 
         """
         if code is None or is_str(code) is False:
             error_str = ERROR_STR_PREFIX + "the type of code param is wrong"
+            return RET_ERROR, error_str
+
+
+        if reference_type is not None and not reference_type in STOCK_REFERENCE_TYPE_MAP:
+            error_str = ERROR_STR_PREFIX + "the type of reference_type param is wrong"
             return RET_ERROR, error_str
 
         query_processor = self._get_sync_query_processor(
@@ -1742,7 +1827,8 @@ class OpenQuoteContext(OpenContextBase):
             return ret_code, msg
 
         col_list = [
-            'code', 'lot_size', 'stock_type', 'stock_name', 'list_time', 'wrt_valid', 'wrt_type', 'wrt_code'
+            'code', 'lot_size', 'stock_type', 'stock_name', 'list_time', 'wrt_valid', 'wrt_type', 'wrt_code',
+            'future_valid','future_main_contract','future_last_trade_time'
         ]
 
         pd_frame = pd.DataFrame(data_list, columns=col_list)
@@ -1776,6 +1862,10 @@ class OpenQuoteContext(OpenContextBase):
             return RET_ERROR, "code list must be like ['HK.00001', 'HK.00700'] or 'HK.00001,HK.00700'"
 
         code_list = unique_and_normalize_list(code_list)
+        if not code_list:
+            error_str = ERROR_STR_PREFIX + "the type of code param is wrong"
+            return RET_ERROR, error_str
+
         for code in code_list:
             if code is None or is_str(code) is False:
                 error_str = ERROR_STR_PREFIX + "the type of param in code_list is wrong"
@@ -1872,7 +1962,7 @@ class OpenQuoteContext(OpenContextBase):
 
         return RET_OK, holding_change_list
 
-    def get_option_chain(self, code, index_option_type=IndexOptionType.NORMAL, start=None, end=None, option_type=OptionType.ALL, option_cond_type=OptionCondType.ALL):
+    def get_option_chain(self, code, index_option_type=IndexOptionType.NORMAL, start=None, end=None, option_type=OptionType.ALL, option_cond_type=OptionCondType.ALL, data_filter = None):
         """
         通过标的股查询期权
 
@@ -1891,6 +1981,30 @@ class OpenQuoteContext(OpenContextBase):
                 ==========    ==========    ========================================
         :param option_type: 期权类型,默认全部，全部/看涨/看跌，futu.common.constant.OptionType
         :param option_cond_type: 默认全部，全部/价内/价外，futu.common.constant.OptionCondType
+        :param data_filter: 数据筛选条件，默认不筛选，参考OptionDataFilter,
+                OptionDataFilter字段如下：
+                ============================    ==========    ========================================
+                 字段                            类型           说明
+                ============================    ==========    ========================================
+                 implied_volatility_min         float          隐含波动率过滤起点 %
+                 implied_volatility_max         float          隐含波动率过滤终点 %
+                 delta_min                      float          希腊值 Delta过滤起点
+                 delta_max                      float          希腊值 Delta过滤终点
+                 gamma_min                      float          希腊值 Gamma过滤起点
+                 gamma_max                      float          希腊值 Gamma过滤终点
+                 vega_min                       float          希腊值 Vega过滤起点
+                 vega_max                       float          希腊值 Vega过滤终点
+                 theta_min                      float          希腊值 Theta过滤起点
+                 theta_max                      float          希腊值 Theta过滤终点
+                 rho_min                        float          希腊值 Rho过滤起点
+                 rho_max                        float          希腊值 Rho过滤终点
+                 net_open_interest_min          float          净未平仓合约数过滤起点
+                 net_open_interest_max          float          净未平仓合约数过滤终点
+                 open_interest_min              float          未平仓合约数过滤起点
+                 open_interest_max              float          未平仓合约数过滤终点
+                 vol_min                        float          成交量过滤起点
+                 vol_max                        float          成交量过滤终点
+                ============================    ==========    ========================================
         :return: (ret, data)
 
                 ret == RET_OK 返回pd dataframe数据，数据列格式如下
@@ -1924,6 +2038,18 @@ class OpenQuoteContext(OpenContextBase):
             msg = ERROR_STR_PREFIX + "the type of index_option_type param is wrong"
             return RET_ERROR, msg
 
+        if data_filter is not None and not isinstance(data_filter, OptionDataFilter):
+            msg = ERROR_STR_PREFIX + "the type of data_filter param is wrong"
+            return RET_ERROR, msg
+
+        if option_type not in OPTION_TYPE_CLASS_MAP:
+            msg = ERROR_STR_PREFIX + "the type of option_type param is wrong"
+            return RET_ERROR, msg
+
+        if option_cond_type not in OPTION_COND_TYPE_CLASS_MAP:
+            msg = ERROR_STR_PREFIX + "the type of option_cond_type param is wrong"
+            return RET_ERROR, msg
+
         ret_code, msg, start, end = normalize_start_end_date(
             start, end, delta_days=29, default_time_end='00:00:00', prefer_end_now=False)
         if ret_code != RET_OK:
@@ -1938,7 +2064,8 @@ class OpenQuoteContext(OpenContextBase):
             "start_date": start,
             "end_date": end,
             "option_cond_type": option_cond_type,
-            "option_type": option_type
+            "option_type": option_type,
+            "data_filter": data_filter
         }
 
         ret_code, msg, option_chain_list = query_processor(**kargs)
@@ -2009,6 +2136,10 @@ class OpenQuoteContext(OpenContextBase):
 
         if stock_owner is not None:
             req.stock_owner = stock_owner
+
+        r, v = SortField.to_number(req.sort_field)
+        if not r:
+            return RET_ERROR, 'sort_field is wrong. must be SortField'
 
         query_processor = self._get_sync_query_processor(
             QuoteWarrant.pack_req, QuoteWarrant.unpack_rsp)
@@ -2301,7 +2432,8 @@ class OpenQuoteContext(OpenContextBase):
             col_list = [
                 'code', 'name', 'lot_size', 'stock_type', 'stock_child_type', 'stock_owner',
                 'option_type', 'strike_time', 'strike_price', 'suspension',
-                'listing_date', 'stock_id', 'delisting'
+                'listing_date', 'stock_id', 'delisting',
+                'main_contract', 'last_trade_time'
             ]
             ret_frame = pd.DataFrame(ret, columns=col_list)
             return RET_OK, ret_frame
@@ -2465,3 +2597,245 @@ class OpenQuoteContext(OpenContextBase):
         col_dict.update((row[0], True) for row in pb_field_map_USIpoExData)
 
         return RET_OK, pd.DataFrame(data, columns=col_dict.keys())
+
+    def get_future_info(self, code_list):
+        """
+         获取期货合约资料
+        :param code_list: 期货
+        :return: (ret, data)
+        ret != RET_OK 返回错误字符串
+        ret == RET_OK data为DataFrame类型，字段如下:
+        =========================   ===========   =========================
+        参数                         类型           说明
+        =========================   ===========   =========================
+        code                        str            股票代码
+        name                        str            股票名称
+        owner                       string         标的
+        exchange                    string         交易所
+        type                        string         合约类型
+        size                        float          合约规模
+        size_unit                   string         合约规模单位
+        price_currency              string         报价货币
+        price_unit                  string         报价单位
+        min_change                  float          最小变动
+        min_change_unit             string         最小变动的单位
+        trade_time                  string         交易时间
+        time_zone                   string         时区
+        last_trade_time             string         最后交易时间
+        exchange_format_url         string         交易所规格url
+        =========================   ===========   =========================
+        """
+        if is_str(code_list):
+            code_list = code_list.split(',')
+        elif isinstance(code_list, list):
+            pass
+        else:
+            return RET_ERROR, "code list must be like ['HK.00001', 'HK.00700'] or 'HK.00001,HK.00700'"
+        code_list = unique_and_normalize_list(code_list)
+
+        if not code_list:
+            error_str = ERROR_STR_PREFIX + "the type of code param is wrong"
+            return RET_ERROR, error_str
+
+        for code in code_list:
+            if code is None or is_str(code) is False:
+                error_str = ERROR_STR_PREFIX + "the type of param in code_list is wrong"
+                return RET_ERROR, error_str
+
+        query_processor = self._get_sync_query_processor(
+            GetFutureInfoQuery.pack_req,
+            GetFutureInfoQuery.unpack,
+        )
+
+        kargs = {
+            "code_list": code_list,
+            "conn_id": self.get_sync_conn_id()
+        }
+        ret_code, msg, ret = query_processor(**kargs)
+        if ret_code == RET_ERROR:
+            return ret_code, msg
+        else:
+            col_list = [
+                'code',
+                'name',
+                'owner',
+                'exchange',
+                'type',
+                'size',
+                'size_unit',
+                'price_currency',
+                'price_unit',
+                'min_change',
+                'min_change_unit',
+                'trade_time',
+                'time_zone',
+                'last_trade_time',
+                'exchange_format_url'
+            ]
+            ret_frame = pd.DataFrame(ret, columns=col_list)
+            return RET_OK, ret_frame
+
+    def set_price_reminder(self, code, op, key=None, reminder_type=None, reminder_freq=None, value=None, note=None):
+        """
+         新增、删除、修改、启用、禁用 某只股票的到价提醒，每只股票每种类型最多可设置10个提醒
+         注意：
+            1. API 中成交量设置统一以股为单位。但是牛牛客户端中，A 股是以为手为单位展示
+            2. 到价提醒类型，存在最小精度，如下：
+                TURNOVER_UP：成交额最小精度为 10 元（人民币元，港元，美元）。传入的数值会自动向下取整到最小精度的整数倍。
+                    如果设置【00700成交额102元提醒】，设置后会得到【00700成交额100元提醒】；如果设置【00700 成交额 8 元提醒】，设置后会得到【00700 成交额 0 元提醒】
+                VOLUME_UP：A 股成交量最小精度为 1000 股，其他市场股票成交量最小精度为 10 股。传入的数值会自动向下取整到最小精度的整数倍。
+                BID_VOL_UP、ASK_VOL_UP：A 股的买一卖一量最小精度为 100 股。传入的数值会自动向下取整到最小精度的整数倍。
+                其余到价提醒类型精度支持到小数点后 3 位
+        :param code: 股票
+        :param op：SetPriceReminderOp，操作类型
+        :param key: int64，标识，新增的情况不需要填
+        :param reminder_type: PriceReminderType，到价提醒的频率，删除、启用、禁用的情况下会忽略该入参
+        :param reminder_freq: PriceReminderFreq，到价提醒的频率，删除、启用、禁用的情况下会忽略该入参
+        :param value: float，提醒值，删除、启用、禁用的情况下会忽略该入参
+        :param note: str，用户设置的备注，删除、启用、禁用的情况下会忽略该入参
+        :return: (ret, data)
+        ret != RET_OK 返回错误字符串
+        ret == RET_OK data为key
+        """
+        if code is None or is_str(code) is False:
+            error_str = ERROR_STR_PREFIX + 'the type of code param is wrong'
+            return RET_ERROR, error_str
+
+        r, v = SetPriceReminderOp.to_number(op)
+        if r is False:
+            error_str = ERROR_STR_PREFIX + "the type of param in op is wrong"
+            return RET_ERROR, error_str
+
+        if reminder_type is not None :
+            r, v = PriceReminderType.to_number(reminder_type)
+            if r is False:
+                error_str = ERROR_STR_PREFIX + "the type of param in reminder_type is wrong"
+                return RET_ERROR, error_str
+
+        if reminder_freq is not None :
+            r, v = PriceReminderFreq.to_number(reminder_freq)
+            if r is False:
+                error_str = ERROR_STR_PREFIX + "the type of param in reminder_freq is wrong"
+                return RET_ERROR, error_str
+
+        query_processor = self._get_sync_query_processor(
+            SetPriceReminderQuery.pack_req,
+            SetPriceReminderQuery.unpack,
+        )
+
+        kargs = {
+            "code": code,
+            "op": op,
+            "key": key,
+            "reminder_type": reminder_type,
+            "reminder_freq": reminder_freq,
+            "value": value,
+            "note": note,
+            "conn_id": self.get_sync_conn_id()
+        }
+        ret_code, msg, key = query_processor(**kargs)
+        if ret_code == RET_ERROR:
+            return ret_code, msg
+        else:
+            return RET_OK, key
+
+    def get_price_reminder(self, code=None, market=None):
+        """
+         获取对某只股票(某个市场)设置的到价提醒列表
+        :param code: 获取该股票的到价提醒，code和market二选一，都存在的情况下code优先
+        :param market: 获取该市场的到价提醒，注意传入沪深都会认为是A股市场
+        :return: (ret, data)
+        ret != RET_OK 返回错误字符串
+        ret == RET_OK data为DataFrame类型，字段如下:
+        =========================   ==================   =========================
+        参数                         类型                 说明
+        =========================   ==================   =========================
+        code                        str                  股票代码
+        key                         int64                标识，用于修改到价提醒
+        reminder_type               PriceReminderType    到价提醒的类型
+        reminder_freq               PriceReminderFreq    到价提醒的频率
+        value                       float                提醒值
+        enable                      bool                 是否启用
+        note                        string               备注，最多10个字符
+        =========================   ==================   =========================
+        """
+        if code is not None and is_str(code) is False:
+            error_str = ERROR_STR_PREFIX + 'the type of code param is wrong'
+            return RET_ERROR, error_str
+
+        if code is None and market is not None and market not in MKT_MAP:
+            error_str = ERROR_STR_PREFIX + "the type of param in market is wrong"
+            return RET_ERROR, error_str
+
+        if code is None and market is None:
+            error_str = ERROR_STR_PREFIX + "must be use one of these params(code, market)"
+            return RET_ERROR, error_str
+
+        query_processor = self._get_sync_query_processor(
+            GetPriceReminderQuery.pack_req,
+            GetPriceReminderQuery.unpack,
+        )
+
+        kargs = {
+                "code": code,
+                "market": market,
+                "conn_id": self.get_sync_conn_id()
+        }
+        ret_code, msg, ret = query_processor(**kargs)
+        if ret_code == RET_ERROR:
+            return ret_code, msg
+        if isinstance(ret, list):
+            col_list = [
+                'code',
+                'key',
+                'reminder_type',
+                'reminder_freq',
+                'value',
+                'enable',
+                'note',
+            ]
+            ret_frame = pd.DataFrame(ret, columns=col_list)
+            return RET_OK, ret_frame
+        else:
+            return RET_ERROR, "empty data"
+
+    def get_user_security_group(self, group_type = UserSecurityGroupType.ALL):
+        """
+         获取自选股分组列表
+        :param group_type: UserSecurityGroupType，分组类型
+        :return: (ret, data)
+        ret != RET_OK 返回错误字符串
+        ret == RET_OK data为DataFrame类型，字段如下:
+        =========================   ==================   ================================
+        参数                         类型                 说明
+        =========================   ==================   ================================
+        group_name                   str                  分组名
+        group_type                   str                  UserSecurityGroupType，分组类型
+        =========================   ==================   ================================
+        """
+        r, v = UserSecurityGroupType.to_number(group_type)
+        if r is False:
+            error_str = ERROR_STR_PREFIX + "the type of param in group_type is wrong"
+            return RET_ERROR, error_str
+
+        query_processor = self._get_sync_query_processor(
+            GetUserSecurityGroupQuery.pack_req,
+            GetUserSecurityGroupQuery.unpack,
+        )
+
+        kargs = {
+            "group_type": group_type,
+            "conn_id": self.get_sync_conn_id()
+        }
+        ret_code, msg, ret = query_processor(**kargs)
+        if ret_code == RET_ERROR:
+            return ret_code, msg
+        if isinstance(ret, list):
+            col_list = [
+                'group_name',
+                'group_type'
+            ]
+            ret_frame = pd.DataFrame(ret, columns=col_list)
+            return RET_OK, ret_frame
+        else:
+            return RET_ERROR, "empty data"

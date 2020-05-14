@@ -12,6 +12,9 @@ from futu.common.pb import Verification_pb2
 from futu.common.pb import Qot_GetReference_pb2
 from futu.common.pb import Qot_Common_pb2
 from futu.common.pb import Trd_Common_pb2
+from futu.common.pb import Qot_SetPriceReminder_pb2
+from futu.common.pb import Qot_UpdatePriceReminder_pb2
+from futu.common.pb import Qot_GetUserSecurityGroup_pb2
 from copy import copy
 from abc import abstractmethod
 
@@ -287,6 +290,8 @@ class SecurityType(object):
       债券
     ..  py:attribute:: DRVT
       期权
+    ..  py:attribute:: FUTURE
+      期货
      ..  py:attribute:: NONE
       未知
     """
@@ -296,6 +301,9 @@ class SecurityType(object):
     WARRANT = "WARRANT"
     BOND = "BOND"
     DRVT = "DRVT"
+    FUTURE = "FUTURE"
+    PLATE = "PLATE"
+    PLATESET = "PLATESET"
     NONE = "N/A"
 
 
@@ -306,6 +314,9 @@ SEC_TYPE_MAP = {
     SecurityType.WARRANT: 5,
     SecurityType.BOND: 1,
     SecurityType.DRVT: 8,
+    SecurityType.FUTURE: 10,
+	SecurityType.PLATE: 7,
+	SecurityType.PLATESET: 9,
     SecurityType.NONE: 0
 }
 
@@ -756,6 +767,7 @@ class ProtoId(object):
     GetUserInfo = 1005  # 获取用户信息
     Verification = 1006  # 请求或输入验证码
     GetDelayStatistics = 1007  # 获取延迟统计
+    TestCmd = 1008
 
     Trd_GetAccList = 2001  # 获取业务账户列表
     Trd_UnlockTrade = 2005  # 解锁或锁定交易
@@ -774,7 +786,7 @@ class ProtoId(object):
 
     Trd_GetHistoryOrderList = 2221  # 获取历史订单列表
     Trd_GetHistoryOrderFillList = 2222  # 获取历史成交列表
-    Trd_GetAccTradingInfo = 2111    # 查询最大买卖数量
+    Trd_GetMaxTrdQtys = 2111    # 查询最大买卖数量
 
     # 订阅数据
     Qot_Sub = 3001  # 订阅或者反订阅
@@ -792,7 +804,8 @@ class ProtoId(object):
     Qot_UpdateOrderBook = 3013  # 推送买卖盘
     Qot_GetBroker = 3014  # 获取经纪队列
     Qot_UpdateBroker = 3015  # 推送经纪队列
-
+    Qot_UpdatePriceReminder = 3019 #到价提醒通知
+	
     # 历史数据
     Qot_GetHistoryKL = 3100  # 获取历史K线
     Qot_GetHistoryKLPoints = 3101  # 获取多只股票历史单点K线
@@ -816,7 +829,7 @@ class ProtoId(object):
     Qot_GetOrderDetail = 3016           # 获取委托明细
     Qot_UpdateOrderDetail = 3017        # 推送委托明细
 
-    Qot_GetWarrantData = 3210          # 拉取涡轮信息
+    Qot_GetWarrant = 3210          # 拉取涡轮信息
     Qot_GetCapitalFlow = 3211          # 获取资金流向
     Qot_GetCapitalDistribution = 3212  # 获取资金分布
 
@@ -825,8 +838,14 @@ class ProtoId(object):
     Qot_StockFilter = 3215   # 条件选股
     Qot_GetCodeChange = 3216   # 代码变换
     Qot_GetIpoList = 3217  # 获取新股Ipo
+    Qot_GetFutureInfo = 3218  # 获取期货资料
+    Qot_RequestTradeDate = 3219  # 在线拉取交易日
+    Qot_SetPriceReminder = 3220  # 设置到价提醒
+    Qot_GetPriceReminder = 3221  # 获取到价提醒
+
+    Qot_GetUserSecurityGroup = 3222 # 获取自选股分组
     All_PushId = [Notify, KeepAlive, Trd_UpdateOrder, Trd_UpdateOrderFill, Qot_UpdateBroker,
-                  Qot_UpdateOrderBook, Qot_UpdateKL, Qot_UpdateRT, Qot_UpdateBasicQot, Qot_UpdateTicker]
+                  Qot_UpdateOrderBook, Qot_UpdateKL, Qot_UpdateRT, Qot_UpdateBasicQot, Qot_UpdateTicker, Qot_UpdatePriceReminder]
 
     @classmethod
     def is_proto_id_push(cls, id):
@@ -893,6 +912,7 @@ class TickerType:
     REOPENINGP_RICED = 'REOPENINGP_RICED'
     CLOSING_PRICED = 'CLOSING_PRICED'
     COMPREHENSIVE_DELAY_PRICE = 'COMPREHENSIVE_DELAY_PRICE'
+    OVERSEAS = 'OVERSEAS'
 
 
 TICKER_TYPE_MAP = {
@@ -926,7 +946,8 @@ TICKER_TYPE_MAP = {
     TickerType.DERIVATIVELY_PRICED: Qot_Common_pb2.TickerType_DerivativelyPriced,
     TickerType.REOPENINGP_RICED: Qot_Common_pb2.TickerType_ReOpeningPriced,
     TickerType.CLOSING_PRICED: Qot_Common_pb2.TickerType_ClosingPriced,
-    TickerType.COMPREHENSIVE_DELAY_PRICE: Qot_Common_pb2.TickerType_ComprehensiveDelayPrice
+    TickerType.COMPREHENSIVE_DELAY_PRICE: Qot_Common_pb2.TickerType_ComprehensiveDelayPrice,
+    TickerType.OVERSEAS: Qot_Common_pb2.TickerType_Overseas
 }
 
 
@@ -1098,6 +1119,7 @@ class TrdMarket(object):
     US = "US"      # 美国市场
     CN = "CN"      # 大陆市场
     HKCC = "HKCC"  # 香港A股通市场
+    FUTURES = "FUTURES"  # 期货市场，
 
 
 TRD_MKT_MAP = {
@@ -1106,6 +1128,7 @@ TRD_MKT_MAP = {
     TrdMarket.US: 2,
     TrdMarket.CN: 3,
     TrdMarket.HKCC: 4,
+    TrdMarket.FUTURES: 5
 }
 
 
@@ -1344,6 +1367,9 @@ MKT_ENV_ENABLE_MAP = {
 
     (TrdMarket.CN, TrdEnv.REAL): False,
     (TrdMarket.CN, TrdEnv.SIMULATE): True,
+
+    (TrdMarket.FUTURES, TrdEnv.REAL): True,
+    (TrdMarket.FUTURES, TrdEnv.SIMULATE): False
 }
 
 
@@ -1376,11 +1402,13 @@ class SecurityReferenceType:
     """
     NONE = 'N/A'
     WARRANT = 'WARRANT'
+    FUTURE = 'FUTURE'
 
 
 STOCK_REFERENCE_TYPE_MAP = {
     SecurityReferenceType.NONE: Qot_GetReference_pb2.ReferenceType_Unknow,
-    SecurityReferenceType.WARRANT: Qot_GetReference_pb2.ReferenceType_Warrant
+    SecurityReferenceType.WARRANT: Qot_GetReference_pb2.ReferenceType_Warrant,
+    SecurityReferenceType.FUTURE: Qot_GetReference_pb2.ReferenceType_Future,
 }
 
 
@@ -1461,6 +1489,10 @@ class SortField(FtEnum):
     LOWER_STRIKE_PRICE = "LOWER_STRIKE_PRICE"  # 下限价，仅界内证支持该字段
     INLINE_PRICE_STATUS = "INLINE_PRICE_STATUS"  # 界内界外，仅界内证支持该字段
 
+    LAST_SETTLE_PRICE = "LAST_SETTLE_PRICE" #期货昨结
+    POSITION = "POSITION"  # 期货持仓量
+    POSITION_CHANGE = "POSITION_CHANGE"  # 期货日持仓
+
     def load_dic(self):
         return {
             self.NONE: Qot_Common_pb2.SortField_Unknow,
@@ -1510,7 +1542,10 @@ class SortField(FtEnum):
             self.AFTER_TURNOVER: Qot_Common_pb2.SortField_AfterTurnover,
             self.UPPER_STRIKE_PRICE: Qot_Common_pb2.SortField_UpperStrikePrice,
             self.LOWER_STRIKE_PRICE: Qot_Common_pb2.SortField_LowerStrikePrice,
-            self.INLINE_PRICE_STATUS: Qot_Common_pb2.SortField_InLinePriceStatus
+            self.INLINE_PRICE_STATUS: Qot_Common_pb2.SortField_InLinePriceStatus,
+            self.LAST_SETTLE_PRICE: Qot_Common_pb2.SortField_LastSettlePrice,
+            self.POSITION: Qot_Common_pb2.SortField_Position,
+            self.POSITION_CHANGE: Qot_Common_pb2.SortField_PositionChange,
         }
 
 
@@ -2170,3 +2205,149 @@ class OptionAreaType(FtEnum):
             self.BERMUDA: Qot_Common_pb2.OptionAreaType_Bermuda
         }
 
+
+class Currency(FtEnum):
+    NONE = 'N/A' # 未知
+    HKD = 'HKD'  # 港币
+    USD = 'USD'  # 美元
+    CNH = 'CNH'  # 离岸人民币
+
+    def load_dic(self):
+        return {
+            self.NONE: Trd_Common_pb2.Currency_Unknown,
+            self.HKD: Trd_Common_pb2.Currency_HKD,
+            self.USD: Trd_Common_pb2.Currency_USD,
+            self.CNH: Trd_Common_pb2.Currency_CNH
+        }
+
+class CltRiskLevel(FtEnum):
+    NONE = 'N/A'    # 未知
+    SAFE = 'SAFE'   # 安全
+    WARNING = 'WARNING'     # 预警
+    DANGER = 'DANGER'       # 危险
+    ABSOLUTE_SAFE = 'ABSOLUTE_SAFE'     # 绝对安全
+    OPT_DANGER = 'OPT_DANGER'           # 危险，期权相关
+
+    def load_dic(self):
+        return {
+            self.NONE: Trd_Common_pb2.CltRiskLevel_Unknown,
+            self.SAFE: Trd_Common_pb2.CltRiskLevel_Safe,
+            self.WARNING: Trd_Common_pb2.CltRiskLevel_Warning,
+            self.DANGER: Trd_Common_pb2.CltRiskLevel_Danger,
+            self.ABSOLUTE_SAFE: Trd_Common_pb2.CltRiskLevel_AbsoluteSafe,
+            self.OPT_DANGER: Trd_Common_pb2.CltRiskLevel_OptDanger
+        }
+
+class TradeDateMarket(FtEnum):
+    NONE = 'N/A'  # 未知
+    HK = 'HK'  # 港股市场
+    US = 'US'  # 美股市场
+    CN = 'CN'  # A股市场
+    NT = 'NT'  # 深（沪）股通
+    ST = 'ST'  # 港股通（深、沪）
+
+    def load_dic(self):
+        return {
+            self.NONE: Qot_Common_pb2.TradeDateMarket_Unknown,
+            self.HK: Qot_Common_pb2.TradeDateMarket_HK,
+            self.US: Qot_Common_pb2.TradeDateMarket_US,
+            self.CN: Qot_Common_pb2.TradeDateMarket_CN,
+            self.NT: Qot_Common_pb2.TradeDateMarket_NT,
+            self.ST: Qot_Common_pb2.TradeDateMarket_ST
+        }
+
+class SetPriceReminderOp(FtEnum):
+    NONE = "N/A"                                       # 未知
+    ADD = "ADD"                                        # 新增
+    DEL = "DEL"                                        # 删除
+    ENABLE = "ENABLE"                                  # 启用
+    DISABLE = "DISABLE"                                # 禁用
+    MODIFY = "MODIFY"                                  # 修改
+
+    def load_dic(self):
+        return {
+            self.NONE: Qot_SetPriceReminder_pb2.SetPriceReminderOp_Unknown,
+            self.ADD: Qot_SetPriceReminder_pb2.SetPriceReminderOp_Add,
+            self.DEL: Qot_SetPriceReminder_pb2.SetPriceReminderOp_Del,
+            self.ENABLE: Qot_SetPriceReminder_pb2.SetPriceReminderOp_Enable,
+            self.DISABLE: Qot_SetPriceReminder_pb2.SetPriceReminderOp_Disable,
+            self.MODIFY: Qot_SetPriceReminder_pb2.SetPriceReminderOp_Modify
+        }
+
+class PriceReminderFreq(FtEnum):
+    NONE = "N/A"                                       # 未知
+    ALWAYS = "ALWAYS"                                  # 持续提醒
+    ONCE_A_DAY = "ONCE_A_DAY"                          # 每日一次
+    ONCE = "ONCE"                                      # 仅提醒一次
+
+    def load_dic(self):
+        return {
+            self.NONE: Qot_Common_pb2.PriceReminderFreq_Unknown,
+            self.ALWAYS: Qot_Common_pb2.PriceReminderFreq_Always,
+            self.ONCE_A_DAY: Qot_Common_pb2.PriceReminderFreq_OnceADay,
+            self.ONCE: Qot_Common_pb2.PriceReminderFreq_OnlyOnce,
+        }
+
+class PriceReminderType(FtEnum):
+    NONE = "N/A"
+    PRICE_UP = "PRICE_UP"  # 当前价涨到
+    PRICE_DOWN = "PRICE_DOWN"  # 当前价跌到
+    CHANGE_RATE_UP = "CHANGE_RATE_UP"  # 当前涨幅
+    CHANGE_RATE_DOWN = "CHANGE_RATE_DOWN"  # 当前跌幅
+    FIVE_MIN_CHANGE_RATE_UP = "FIVE_MIN_CHANGE_RATE_UP"  # 5分钟涨幅
+    FIVE_MIN_CHANGE_RATE_DOWN = "FIVE_MIN_CHANGE_RATE_DOWN"  # 5分钟跌幅
+    VOLUME_UP = "VOLUME_UP"  # 成交量大于
+    TURNOVER_UP = "TURNOVER_UP"  # 成交额大于
+    TURNOVER_RATE_UP = "TURNOVER_RATE_UP"  # 换手率大于
+    BID_PRICE_UP = "BID_PRICE_UP"  # 买一价高于
+    ASK_PRICE_DOWN = "ASK_PRICE_DOWN"  # 卖一价低于
+    BID_VOL_UP = "BID_VOL_UP"  # 买一量高于
+    ASK_VOL_UP = "ASK_VOL_UP"  # 卖一量高于
+
+    def load_dic(self):
+        return {
+            self.NONE: Qot_Common_pb2.PriceReminderFreq_Unknown,
+            self.PRICE_UP: Qot_Common_pb2.PriceReminderType_PriceUp,
+            self.PRICE_DOWN: Qot_Common_pb2.PriceReminderType_PriceDown,
+            self.CHANGE_RATE_UP: Qot_Common_pb2.PriceReminderType_ChangeRateUp,
+            self.CHANGE_RATE_DOWN: Qot_Common_pb2.PriceReminderType_ChangeRateDown,
+            self.FIVE_MIN_CHANGE_RATE_UP: Qot_Common_pb2.PriceReminderType_5MinChangeRateUp,
+            self.FIVE_MIN_CHANGE_RATE_DOWN: Qot_Common_pb2.PriceReminderType_5MinChangeRateDown,
+            self.VOLUME_UP: Qot_Common_pb2.PriceReminderType_VolumeUp,
+            self.TURNOVER_UP: Qot_Common_pb2.PriceReminderType_TurnoverUp,
+            self.TURNOVER_RATE_UP: Qot_Common_pb2.PriceReminderType_TurnoverRateUp,
+            self.BID_PRICE_UP: Qot_Common_pb2.PriceReminderType_BidPriceUp,
+            self.ASK_PRICE_DOWN: Qot_Common_pb2.PriceReminderType_AskPriceDown,
+            self.BID_VOL_UP: Qot_Common_pb2.PriceReminderType_BidVolUp,
+            self.ASK_VOL_UP: Qot_Common_pb2.PriceReminderType_AskVolUp,
+        }
+
+class PriceReminderMarketStatus(FtEnum):
+    NONE = "N/A"
+    OPEN = "OPEN"
+    US_PRE = "US_PRE"
+    US_AFTER = "US_AFTER"
+
+    def load_dic(self):
+        return {
+            self.NONE: Qot_UpdatePriceReminder_pb2.MarketStatus_Unknow,
+            self.OPEN: Qot_UpdatePriceReminder_pb2.MarketStatus_Open,
+            self.US_PRE: Qot_UpdatePriceReminder_pb2.MarketStatus_USPre,
+            self.US_AFTER: Qot_UpdatePriceReminder_pb2.MarketStatus_USAfter,
+        }
+
+
+# 自选股的类型
+class UserSecurityGroupType(FtEnum):
+    NONE = "N/A"                                       # 未知
+    CUSTOM = "CUSTOM"                                  # 自定义分组
+    SYSTEM = "SYSTEM"                                  # 系统分组
+    ALL = "ALL"                                        # 全部分组
+
+    def load_dic(self):
+        return {
+            self.NONE: Qot_GetUserSecurityGroup_pb2.GroupType_Unknown,
+            self.CUSTOM: Qot_GetUserSecurityGroup_pb2.GroupType_Custom,
+            self.SYSTEM: Qot_GetUserSecurityGroup_pb2.GroupType_System,
+            self.ALL: Qot_GetUserSecurityGroup_pb2.GroupType_All
+        }

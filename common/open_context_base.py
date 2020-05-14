@@ -10,7 +10,7 @@ from datetime import datetime
 from threading import RLock, Thread
 from futu.common.utils import *
 from futu.common.handler_context import HandlerContext
-from futu.quote.quote_query import InitConnect
+from futu.quote.quote_query import InitConnect, TestCmd
 from futu.quote.quote_response_handler import AsyncHandler_InitConnect
 from futu.quote.quote_query import GlobalStateQuery
 from futu.quote.quote_query import KeepAlive, parse_head
@@ -167,6 +167,7 @@ class OpenContextBase(object):
                     TickerHandlerBase                   逐笔处理基类
                     RTDataHandlerBase                   分时数据处理基类
                     BrokerHandlerBase                   经济队列处理基类
+                    PriceReminderHandlerBase            到价提醒处理基类
                     ===============================    =========================
 
         :return: RET_OK: 设置成功
@@ -474,11 +475,13 @@ class OpenContextBase(object):
                                                                                  self.__port))
             net_mgr = self._net_mgr
             conn_id = self._conn_id
+
             self._status = ContextStatus.CONNECTING
             self._sync_conn_id = 0
             self._conn_id = 0
             self._keep_alive_fail_count = 0
             self._reconnect_timer = Timer(wait_reconnect_interval, self._reconnect)
+            self._sync_req_ret = None
             self._reconnect_timer.start()
 
         net_mgr.close(conn_id)
@@ -492,4 +495,16 @@ class OpenContextBase(object):
 
         self._socket_reconnect_and_wait_ready()
 
+    def test_cmd(self, cmd, params):
+        query_processor = self._get_sync_query_processor(
+            TestCmd.pack_req, TestCmd.unpack_rsp)
 
+        kargs = {
+            'cmd': cmd,
+            'params': params,
+        }
+        ret_code, msg, state_dict = query_processor(**kargs)
+        if ret_code != RET_OK:
+            return ret_code, msg
+
+        return RET_OK, state_dict
